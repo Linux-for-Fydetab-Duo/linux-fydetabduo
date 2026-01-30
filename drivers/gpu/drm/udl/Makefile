@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
+udl-y := udl_drv.o udl_edid.o udl_modeset.o udl_main.o udl_transfer.o udl_cursor.o
+
+obj-$(CONFIG_DRM_UDL) := udl.o
