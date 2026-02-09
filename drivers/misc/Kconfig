@@ -5,6 +5,17 @@
 
 menu "Misc devices"
 
+config JW_IO_CONTROL
+	tristate "JW USB modem GPIO control driver"
+	depends on OF_GPIO
+	help
+	  Say Y here if you want support for JW USB modem GPIO control.
+	  This driver controls GPIO pins for USB modem power management,
+	  reset, and wireless disable functionality.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called jw_io_core.
+
 config SENSORS_LIS3LV02D
 	tristate
 	depends on INPUT

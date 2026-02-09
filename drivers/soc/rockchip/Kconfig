@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
 if ARCH_ROCKCHIP || COMPILE_TEST
 
+source "drivers/soc/rockchip/Kconfig.cpu"
+
 #
 # Rockchip Soc drivers
 #
@@ -29,5 +31,66 @@ config ROCKCHIP_DTPM
 	  Describe the hierarchy for the Dynamic Thermal Power Management tree
 	  on this platform. That will create all the power capping capable
 	  devices.
+
+config ROCKCHIP_SUSPEND_MODE
+  tristate "Rockchip suspend mode config"
+  help
+    Say Y here if you want to set the suspend mode to the ATF.
+
+config ROCKCHIP_CPUINFO
+	tristate "Rockchip cpuinfo support"
+	depends on (NVMEM_ROCKCHIP_EFUSE || NVMEM_ROCKCHIP_OTP) && (ARM64 || ARM)
+	help
+	  Say y here to enable Rockchip cpuinfo support.
+	  Set system_serial_low/high from eFuse ID.
+	  Serial can read from /proc/cpuinfo.
+
+	  If unsure, say N.
+
+config ROCKCHIP_VENDOR_STORAGE
+  tristate "Rockchip vendor storage support"
+  help
+    Say y here to enable rockchip vendor storage support.
+
+config ROCKCHIP_MMC_VENDOR_STORAGE
+  tristate "Rockchip mmc vendor storage support"
+  depends on ROCKCHIP_VENDOR_STORAGE && MMC
+  help
+    Say y here to enable rockchip mmc vendor storage support.
+
+config ROCKCHIP_MTD_VENDOR_STORAGE
+  tristate "Rockchip mtd vendor storage support"
+  depends on ROCKCHIP_VENDOR_STORAGE && MTD
+  help
+    Say y here to enable rockchip mtd vendor storage support.
+
+config ROCKCHIP_OPP
+	tristate "Rockchip OPP select support"
+	depends on PM_DEVFREQ
+	help
+	  Say y here to enable rockchip OPP support.
+
+config ROCKCHIP_PVTM
+	tristate "Rockchip PVTM support"
+	help
+	  Say y here to enable pvtm support.
+	  The Process-Voltage-Temperature Monitor (PVTM) is used to monitor
+	  the chip performance variance caused by chip process, voltage and
+	  temperature.
+
+config ROCKCHIP_DEBUG
+	tristate "Rockchip DEBUG"
+	help
+	  Print dbgpcsr for every cpu when panic.
+
+config ROCKCHIP_SYSTEM_MONITOR
+	tristate "Rockchip system monitor support"
+	depends on THERMAL && PM_DEVFREQ
+	help
+	  Say y here to enable rockchip system monitor support.
+	  Rockchip system monitor manages CPU and device frequency
+	  scaling based on temperature and system status.
+
+source "drivers/soc/rockchip/fiq_debugger/Kconfig"
 
 endif

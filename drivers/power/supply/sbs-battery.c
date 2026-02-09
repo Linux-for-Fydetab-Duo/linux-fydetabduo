@@ -4,7 +4,6 @@
  *
  * Copyright (c) 2010, NVIDIA Corporation.
  */
-
 #include <linux/bits.h>
 #include <linux/delay.h>
 #include <linux/devm-helpers.h>
@@ -53,6 +52,8 @@ enum {
 	REG_CHARGE_VOLTAGE,
 };
 
+#define SBS_POLL_TIME_OUT 5000
+
 #define REG_ADDR_SPEC_INFO		0x1A
 #define SPEC_INFO_VERSION_MASK		GENMASK(7, 4)
 #define SPEC_INFO_VERSION_SHIFT		4
@@ -74,6 +75,7 @@ enum sbs_capacity_mode {
 
 /* manufacturer access defines */
 #define MANUFACTURER_ACCESS_STATUS	0x0006
+#define MANUFACTURER_ACCESS_SHIP  0x0010
 #define MANUFACTURER_ACCESS_SLEEP	0x0011
 
 /* battery status value bits */
@@ -103,7 +105,7 @@ static const struct chip_data {
 	[REG_TEMPERATURE] =
 		SBS_DATA(POWER_SUPPLY_PROP_TEMP, 0x08, 0, 65535),
 	[REG_VOLTAGE] =
-		SBS_DATA(POWER_SUPPLY_PROP_VOLTAGE_NOW, 0x09, 0, 65535),
+		SBS_DATA(POWER_SUPPLY_PROP_VOLTAGE_NOW, 0x09, 0, 20000),
 	[REG_CURRENT_NOW] =
 		SBS_DATA(POWER_SUPPLY_PROP_CURRENT_NOW, 0x0A, -32768, 32767),
 	[REG_CURRENT_AVG] =
@@ -216,6 +218,7 @@ struct sbs_info {
 	u32				flags;
 	int				technology;
 	char				strings[NR_STRING_BUFFERS][I2C_SMBUS_BLOCK_MAX + 1];
+  struct timer_list timer;
 };
 
 static char *sbs_get_string_buf(struct sbs_info *chip,
@@ -859,6 +862,10 @@ static int sbs_get_chemistry(struct sbs_info *chip,
 		chip->technology = POWER_SUPPLY_TECHNOLOGY_NiCd;
 	else if (!strncasecmp(chemistry, "NiMH", 4))
 		chip->technology = POWER_SUPPLY_TECHNOLOGY_NiMH;
+  else if (!strncasecmp(chemistry, "3613", 4))
+    chip->technology = POWER_SUPPLY_TECHNOLOGY_LION;
+  else if (!strncasecmp(chemistry, "1550", 4))
+    chip->technology = POWER_SUPPLY_TECHNOLOGY_LION;
 	else
 		chip->technology = POWER_SUPPLY_TECHNOLOGY_UNKNOWN;
 
@@ -1112,6 +1119,59 @@ static const struct power_supply_desc sbs_default_desc = {
 	.external_power_changed = sbs_external_power_changed,
 };
 
+static void sbs_timed_poll(struct timer_list * t) {
+  struct sbs_info *chip = from_timer(chip, t, timer);
+	schedule_delayed_work(&chip->work, 0);
+	chip->poll_time = 0;
+  mod_timer(t, jiffies + msecs_to_jiffies(SBS_POLL_TIME_OUT));
+}
+
+static inline void sbs_timed_poll_start(struct sbs_info *chip) {
+  timer_setup(&chip->timer, sbs_timed_poll, 0);
+  mod_timer(&chip->timer, jiffies + msecs_to_jiffies(SBS_POLL_TIME_OUT));
+}
+
+static inline void sbs_timed_poll_stop(struct sbs_info *chip) {
+  del_timer_sync(&chip->timer);
+}
+
+static ssize_t shipping_mode_show(struct device *dev, struct device_attribute *attr,
+      char *buf) {
+  struct i2c_client *client = to_i2c_client(dev);
+  return sprintf(buf, "%d\n", sbs_read_word_data(client, sbs_data[REG_MANUFACTURER_DATA].addr));
+}
+
+static ssize_t shipping_mode_store(struct device *dev, struct device_attribute *attr,
+       const char *buf, size_t count) {
+  struct i2c_client *client = to_i2c_client(dev);
+  int new_state, ret;
+  ret = kstrtoint(buf, 10, &new_state);
+  if (!ret && new_state == 16) {
+    dev_info(dev, "(%d), enter shipping mode.\n", new_state);
+    ret = sbs_write_word_data(client, sbs_data[REG_MANUFACTURER_DATA].addr, MANUFACTURER_ACCESS_SHIP);
+    if (!ret) {
+      return count;
+    }
+  }
+  dev_err(dev, "invalid parameter. %d\n", ret);
+  return count;
+}
+
+static struct device_attribute sbs_bat_attr[] = {
+  __ATTR_RW(shipping_mode),
+};
+
+static void sbs_init_sysfs(struct sbs_info *chip) {
+  int i, ret;
+  for (i = 0; i < ARRAY_SIZE(sbs_bat_attr); i++) {
+    ret = sysfs_create_file(&chip->client->dev.kobj,
+      &sbs_bat_attr[i].attr);
+    if (ret)
+      dev_err(&chip->client->dev, "create bat node(%s) error\n",
+        sbs_bat_attr[i].attr.name);
+  }
+}
+
 static int sbs_probe(struct i2c_client *client)
 {
 	struct sbs_info *chip;
@@ -1216,10 +1276,21 @@ skip_gpio:
 		return dev_err_probe(&client->dev, PTR_ERR(chip->power_supply),
 				     "Failed to register power supply\n");
 
+	if (!chip->gpio_detect)
+		sbs_timed_poll_start(chip);
+  sbs_init_sysfs(chip);
 	dev_info(&client->dev,
 		"%s: battery gas gauge device registered\n", client->name);
 
 	return 0;
+}
+
+static void sbs_shutdown(struct i2c_client *client)
+{
+	struct sbs_info *chip = i2c_get_clientdata(client);
+	if (!chip->gpio_detect)
+		sbs_timed_poll_stop(chip);
+	cancel_delayed_work_sync(&chip->work);
 }
 
 #if defined CONFIG_PM_SLEEP
@@ -1276,6 +1347,7 @@ MODULE_DEVICE_TABLE(of, sbs_dt_ids);
 
 static struct i2c_driver sbs_battery_driver = {
 	.probe		= sbs_probe,
+  .shutdown = sbs_shutdown,
 	.alert		= sbs_alert,
 	.id_table	= sbs_id,
 	.driver = {

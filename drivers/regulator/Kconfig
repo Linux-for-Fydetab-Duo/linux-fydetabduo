@@ -1162,6 +1162,16 @@ config REGULATOR_RK808
 	  through regulator interface. The device supports multiple DCDC/LDO
 	  outputs which can be controlled by i2c communication.
 
+config REGULATOR_RK860X
+	tristate "Rockchip RK860X Power regulators"
+	depends on I2C
+	select REGMAP_I2C
+	help
+	  This driver supports RK8600/RK8601/RK8602/RK8603 voltage regulator chips.
+	  The RK860X series are high-efficiency step-down DC-DC converters
+	  controlled through an I2C interface. They support different voltage
+	  ranges depending on the chip variant.
+
 config REGULATOR_RN5T618
 	tristate "Ricoh RN5T567/618 voltage regulators"
 	depends on MFD_RN5T618

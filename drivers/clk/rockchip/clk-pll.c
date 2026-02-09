@@ -15,6 +15,7 @@
 #include <linux/iopoll.h>
 #include <linux/regmap.h>
 #include <linux/clk.h>
+#include <linux/clk/rockchip.h>
 #include "clk.h"
 
 #define PLL_MODE_MASK		0x3
@@ -38,6 +39,8 @@ struct rockchip_clk_pll {
 	u8			flags;
 	const struct rockchip_pll_rate_table *rate_table;
 	unsigned int		rate_count;
+	int			sel;
+	unsigned long		scaling;
 	spinlock_t		*lock;
 
 	struct rockchip_clk_provider *ctx;
@@ -1208,3 +1211,226 @@ err_mux:
 	kfree(pll);
 	return mux_clk;
 }
+
+/* PLL scaling functions for OPP */
+int rockchip_pll_clk_adaptive_scaling(struct clk *clk, int sel)
+{
+	struct clk *parent = clk_get_parent(clk);
+	struct rockchip_clk_pll *pll;
+
+	if (IS_ERR_OR_NULL(parent))
+		return -EINVAL;
+
+	pll = to_rockchip_clk_pll(__clk_get_hw(parent));
+	if (!pll)
+		return -EINVAL;
+
+	pll->sel = sel;
+	return 0;
+}
+EXPORT_SYMBOL(rockchip_pll_clk_adaptive_scaling);
+
+int rockchip_pll_clk_rate_to_scale(struct clk *clk, unsigned long rate)
+{
+	const struct rockchip_pll_rate_table *rate_table;
+	struct clk *parent = clk_get_parent(clk);
+	struct rockchip_clk_pll *pll;
+	unsigned int i;
+
+	if (IS_ERR_OR_NULL(parent))
+		return -EINVAL;
+
+	pll = to_rockchip_clk_pll(__clk_get_hw(parent));
+	if (!pll)
+		return -EINVAL;
+
+	rate_table = pll->rate_table;
+	for (i = 0; i < pll->rate_count; i++) {
+		if (rate >= rate_table[i].rate)
+			return i;
+	}
+
+	return -EINVAL;
+}
+EXPORT_SYMBOL(rockchip_pll_clk_rate_to_scale);
+
+int rockchip_pll_clk_scale_to_rate(struct clk *clk, unsigned int scale)
+{
+	const struct rockchip_pll_rate_table *rate_table;
+	struct clk *parent = clk_get_parent(clk);
+	struct rockchip_clk_pll *pll;
+	unsigned int i;
+
+	if (IS_ERR_OR_NULL(parent))
+		return -EINVAL;
+
+	pll = to_rockchip_clk_pll(__clk_get_hw(parent));
+	if (!pll)
+		return -EINVAL;
+
+	rate_table = pll->rate_table;
+	for (i = 0; i < pll->rate_count; i++) {
+		if (i == scale)
+			return rate_table[i].rate;
+	}
+
+	return -EINVAL;
+}
+EXPORT_SYMBOL(rockchip_pll_clk_scale_to_rate);
+
+#ifdef CONFIG_ROCKCHIP_CLK_COMPENSATION
+int rockchip_pll_clk_compensation(struct clk *clk, int ppm)
+{
+	struct clk *parent = clk_get_parent(clk);
+	struct rockchip_clk_pll *pll;
+	static u32 frac, fbdiv, s, p;
+	bool negative;
+	u32 pllcon, pllcon0, pllcon2, fbdiv_mask, frac_mask, frac_shift;
+	u64 fracdiv, m, n;
+
+	if ((ppm > 1000) || (ppm < -1000))
+		return -EINVAL;
+
+	if (IS_ERR_OR_NULL(parent))
+		return -EINVAL;
+
+	pll = to_rockchip_clk_pll(__clk_get_hw(parent));
+	if (!pll)
+		return -EINVAL;
+
+	switch (pll->type) {
+	case pll_rk3036:
+	case pll_rk3328:
+		pllcon0 = RK3036_PLLCON(0);
+		pllcon2 = RK3036_PLLCON(2);
+		fbdiv_mask = RK3036_PLLCON0_FBDIV_MASK;
+		frac_mask = RK3036_PLLCON2_FRAC_MASK;
+		frac_shift = RK3036_PLLCON2_FRAC_SHIFT;
+		if (!frac)
+			writel(HIWORD_UPDATE(RK3036_PLLCON1_DSMPD_MASK,
+					     RK3036_PLLCON1_DSMPD_MASK, 0),
+			       pll->reg_base + RK3036_PLLCON(1));
+		break;
+	case pll_rk3066:
+		return -EINVAL;
+	case pll_rk3399:
+		pllcon0 = RK3399_PLLCON(0);
+		pllcon2 = RK3399_PLLCON(2);
+		fbdiv_mask = RK3399_PLLCON0_FBDIV_MASK;
+		frac_mask = RK3399_PLLCON2_FRAC_MASK;
+		frac_shift = RK3399_PLLCON2_FRAC_SHIFT;
+		break;
+	case pll_rk3588:
+		pllcon0 = RK3588_PLLCON(0);
+		pllcon2 = RK3588_PLLCON(2);
+		fbdiv_mask = RK3588_PLLCON0_M_MASK;
+		frac_mask = RK3588_PLLCON2_K_MASK;
+		frac_shift = RK3588_PLLCON2_K_SHIFT;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	negative = !!(ppm & BIT(31));
+	ppm = negative ? ~ppm + 1 : ppm;
+
+	switch (pll->type) {
+	case pll_rk3036:
+	case pll_rk3328:
+	case pll_rk3066:
+	case pll_rk3399:
+		/*
+		 *   delta frac                 frac          ppm
+		 * -------------- = (fbdiv + ----------) * ---------
+		 *    1 << 24                 1 << 24       1000000
+		 *
+		 */
+		if (!frac) {
+			frac = readl_relaxed(pll->reg_base + pllcon2) & frac_mask;
+			fbdiv = readl_relaxed(pll->reg_base + pllcon0) & fbdiv_mask;
+		}
+		m = div64_u64((uint64_t)frac * ppm, 1000000);
+		n = div64_u64((uint64_t)ppm << 24, 1000000) * fbdiv;
+
+		fracdiv = negative ? frac - (m + n) : frac + (m + n);
+
+		if (!frac || fracdiv > frac_mask)
+			return -EINVAL;
+
+		pllcon = readl_relaxed(pll->reg_base + pllcon2);
+		pllcon &= ~(frac_mask << frac_shift);
+		pllcon |= fracdiv << frac_shift;
+		writel_relaxed(pllcon, pll->reg_base + pllcon2);
+		break;
+	case pll_rk3588:
+		if (!fbdiv) {
+			frac = readl_relaxed(pll->reg_base + pllcon2) & frac_mask;
+			fbdiv = readl_relaxed(pll->reg_base + pllcon0) & fbdiv_mask;
+		}
+		if (!frac) {
+			pllcon = readl_relaxed(pll->reg_base + RK3588_PLLCON(1));
+			s = ((pllcon >> RK3588_PLLCON1_S_SHIFT)
+				& RK3588_PLLCON1_S_MASK);
+			p = ((pllcon >> RK3588_PLLCON1_P_SHIFT)
+				& RK3588_PLLCON1_P_MASK);
+			m = div64_u64((uint64_t)clk_get_rate(clk) * ppm, 24000000);
+			n = div64_u64((uint64_t)m * 65536 * p * (1 << s), 1000000);
+
+			if (n > 32767)
+				return -EINVAL;
+			fracdiv = negative ? ~n + 1 : n;
+		} else if (frac & BIT(15)) {
+			frac = (~(frac - 1)) & RK3588_PLLCON2_K_MASK;
+			m = div64_u64((uint64_t)frac * ppm, 100000);
+			n = div64_u64((uint64_t)ppm * 65536 * fbdiv, 100000);
+			if (negative) {
+				fracdiv = frac + (div64_u64(m + n, 10));
+				if (fracdiv > 32767)
+					return -EINVAL;
+				fracdiv = ~fracdiv + 1;
+			} else {
+				s = div64_u64(m + n, 10);
+				if (frac >= s) {
+					fracdiv = frac - s;
+					if (fracdiv > 32767)
+						return -EINVAL;
+					fracdiv = ~fracdiv + 1;
+				} else {
+					fracdiv = s - frac;
+					if (fracdiv > 32767)
+						return -EINVAL;
+				}
+			}
+		} else {
+			m = div64_u64((uint64_t)frac * ppm, 100000);
+			n = div64_u64((uint64_t)ppm * 65536 * fbdiv, 100000);
+			if (!negative) {
+				fracdiv = frac + (div64_u64(m + n, 10));
+				if (fracdiv > 32767)
+					return -EINVAL;
+			} else {
+				s = div64_u64(m + n, 10);
+				if (frac >= s) {
+					fracdiv = frac - s;
+					if (fracdiv > 32767)
+						return -EINVAL;
+				} else {
+					fracdiv = s - frac;
+					if (fracdiv > 32767)
+						return -EINVAL;
+					fracdiv = ~fracdiv + 1;
+				}
+			}
+		}
+
+		writel_relaxed(HIWORD_UPDATE(fracdiv, frac_mask, frac_shift),
+			       pll->reg_base + pllcon2);
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return  0;
+}
+EXPORT_SYMBOL(rockchip_pll_clk_compensation);
+#endif

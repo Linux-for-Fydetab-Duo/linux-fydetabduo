@@ -1,0 +1,203 @@
+// SPDX-License-Identifier: GPL-2.0+
+// Copyright 2022 The FydeOS Authors.
+// Author: Yang Tsao<yang@fydeos.io>
+//#define DEBUG
+#include <linux/miscdevice.h>
+#include <linux/module.h>
+#include <linux/uaccess.h>
+#include <linux/errno.h>
+#include <linux/dev_printk.h>
+#include <linux/poll.h>
+#include <uapi/asm-generic/poll.h>
+#include "dummy_v4l2_devices.h"
+#define DUMMY_DEC_NAME "video-dec0"
+#define DUMMY_ENC_NAME "video-enc0"
+#define DUMMY_JPG_DEC_NAME "jpeg-dec0"
+#define DUMMY_JPG_ENC_NAME "jpeg-enc0"
+#define DUMMY_MAGIC 0x47
+#define IOCTL_GET_DEV_TYPE _IOR(DUMMY_MAGIC, 1, unsigned int)
+#define IOCTL_SET_DEV_EVENT _IOW(DUMMY_MAGIC, 2, unsigned char)
+#define IOCTL_RESET_DEV _IOW(DUMMY_MAGIC, 3, unsigned char)
+#define FIFO_SIZE 64
+#define DEC 10
+#define ENC 11
+
+struct dummy_private_data {
+  atomic_t event;
+  struct wait_queue_head event_wait;
+  struct miscdevice *dev;
+  unsigned int type;
+};
+
+static char* get_type(struct dummy_private_data *data) {
+  return data->type == DEC ? "dec":"enc";
+}
+
+#define my_fmt(fmt) "dummy %s:" fmt
+#define dummy_dbg(data, fmt, ...) \
+  dev_dbg(data->dev->this_device, my_fmt(fmt), get_type(data), ##__VA_ARGS__)
+
+static ssize_t dummy_v4l2_read(struct file *file, char *buf, size_t count, loff_t *ppos) {
+#if 0
+  struct miscdevice *dev = (struct miscdevice *) file->private_data;
+  unsigned long n;
+  if (count < 4)
+    return -1;
+  if (strncmp(dev->name, DUMMY_DEC_NAME, 7)) {
+    n = copy_to_user(buf, "enc\n", 4);
+  } else {
+    n = copy_to_user(buf, "dec\n", 4);
+  }
+  if (n) return -1;
+  return 4;
+#endif
+  return 0;
+}
+
+static ssize_t dummy_v4l2_write(struct file *file, const char *buf, size_t count, loff_t *ppos) {
+  return count;
+}
+
+static void reset_v4l2_status(struct dummy_private_data *data) {
+  dummy_dbg(data, "%s\n", __func__);
+  atomic_set(&data->event, 0);
+}
+
+static int dummy_v4l2_open(struct inode *inode, struct file *file) {
+  struct miscdevice *dev = (struct miscdevice *) file->private_data;
+  struct dummy_private_data *dummy_data = kmalloc(sizeof(*dummy_data),GFP_KERNEL);
+  if (!dummy_data)
+    return -ENOMEM;
+  dummy_data->dev = dev;
+  dummy_data->type = strstr(dev->name, "dec") ? DEC : ENC;
+  init_waitqueue_head(&dummy_data->event_wait);
+  file->private_data = dummy_data;
+  dummy_dbg(dummy_data, "opened.\n");
+  return 0;
+}
+
+static long dummy_v4l2_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
+  struct dummy_private_data *dummy_data = (struct dummy_private_data *) file->private_data;
+  struct miscdevice *dev = dummy_data->dev;
+  int ret = -EFAULT;
+  switch (cmd) {
+    case IOCTL_GET_DEV_TYPE:
+      dummy_dbg(dummy_data, "get dev type\n");
+      if (copy_to_user((unsigned int __user *)arg, &dummy_data->type, sizeof(unsigned int)))
+        goto on_err;
+      break;
+    case IOCTL_SET_DEV_EVENT: {
+      unsigned char byte;
+      unsigned char event;
+      if (copy_from_user(&byte, (unsigned char __user*)arg, sizeof(unsigned char)))
+        goto on_err;
+      event = atomic_read(&dummy_data->event);
+      if (event == POLLPRI)
+        byte |= event;
+      atomic_set(&dummy_data->event, (int) byte);
+      dummy_dbg(dummy_data, "set event:0x%x\n", byte);
+      wake_up_all(&dummy_data->event_wait);
+      break;
+    }
+    case IOCTL_RESET_DEV:
+      reset_v4l2_status(dummy_data);
+      break;
+    default:
+      dev_err(dev->this_device, "unknown command:0x%x\n", cmd);
+      goto on_err;
+  }
+  ret = 0;
+on_err:
+  return ret;
+}
+
+static __poll_t dummy_v4l2_poll(struct file *file, struct poll_table_struct * poll_table) {
+  struct dummy_private_data *dummy_data = (struct dummy_private_data *) file->private_data;
+  __poll_t ret = 0;
+  dummy_dbg(dummy_data, "poll...\n");
+  poll_wait(file, &dummy_data->event_wait, poll_table);
+  ret = (__poll_t) atomic_read(&dummy_data->event);
+  if (ret) {
+    atomic_set(&dummy_data->event, 0);
+    dummy_dbg(dummy_data, "poll ret:%u\n", ret);
+  }
+  return (__poll_t) ret;
+}
+
+static int dummy_v4l2_release(struct inode *inode, struct file *file) {
+  struct dummy_private_data *dummy_data = (struct dummy_private_data *) file->private_data;
+  wake_up_all(&dummy_data->event_wait);
+  dummy_dbg(dummy_data, "release.\n");
+  kfree(dummy_data);
+  return 0;
+}
+
+struct file_operations fops = {
+  .owner = THIS_MODULE,
+  .open = dummy_v4l2_open,
+  .release = dummy_v4l2_release,
+  .read = dummy_v4l2_read,
+  .write = dummy_v4l2_write,
+  .unlocked_ioctl = dummy_v4l2_ioctl,
+  .poll = dummy_v4l2_poll,
+};
+
+static struct miscdevice v4l2_dec_dev = {
+  .minor = MISC_DYNAMIC_MINOR,
+  .name = DUMMY_DEC_NAME,
+  .fops = &fops,
+};
+
+static struct miscdevice v4l2_enc_dev = {
+  .minor = MISC_DYNAMIC_MINOR,
+  .name = DUMMY_ENC_NAME,
+  .fops = &fops,
+};
+#ifdef JPEG_DUMMY
+static struct miscdevice v4l2_jpeg_dec_dev = {
+  .minor = MISC_DYNAMIC_MINOR,
+  .name = DUMMY_JPG_DEC_NAME,
+  .fops = &fops,
+};
+
+static struct miscdevice v4l2_jpeg_enc_dev = {
+  .minor = MISC_DYNAMIC_MINOR,
+  .name = DUMMY_JPG_ENC_NAME,
+  .fops = &fops,
+};
+#endif
+int init_dummy_v4l2_devices(void) {
+  int ret = 0;
+  ret = misc_register(&v4l2_dec_dev);
+  if (ret) {
+    pr_err("failed to register %s, ret:%d", v4l2_dec_dev.name, ret);
+    return ret;
+  }
+  ret = misc_register(&v4l2_enc_dev);
+  if (ret) {
+    pr_err("failed to register %s device, ret:%d", v4l2_enc_dev.name, ret);
+    return ret;
+  }
+#ifdef JPEG_DUMMY
+  ret = misc_register(&v4l2_jpeg_enc_dev);
+  if (ret) {
+    pr_err("failed to register %s device, ret:%d", v4l2_jpeg_enc_dev.name, ret);
+    return ret;
+  }
+  ret = misc_register(&v4l2_jpeg_dec_dev);
+  if (ret) {
+    pr_err("failed to register %s device, ret:%d", v4l2_jpeg_dec_dev.name, ret);
+    return ret;
+  }
+#endif
+  return 0;
+}
+
+void cleanup_dummy_v4l2_devices(void) {
+  misc_deregister(&v4l2_dec_dev);
+  misc_deregister(&v4l2_enc_dev);
+#ifdef JPEG_DUMMY
+	misc_deregister(&v4l2_jpeg_enc_dev);
+	misc_deregister(&v4l2_jpeg_dec_dev);
+#endif
+}

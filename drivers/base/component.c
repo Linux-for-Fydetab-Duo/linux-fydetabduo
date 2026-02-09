@@ -191,6 +191,43 @@ static int find_components(struct aggregate_device *adev)
 
 		c = find_component(adev, mc);
 		if (!c) {
+			const char *missing_info = "unknown";
+
+			/* Extract meaningful information based on comparison function */
+			if (mc->compare == component_compare_of && mc->data) {
+				struct device_node *node = (struct device_node *)mc->data;
+				missing_info = node->full_name ? node->full_name : node->name;
+				dev_dbg(adev->parent,
+					"Component %zu missing: OF node '%s' (compatible: %s)\n",
+					i, missing_info,
+				(const char*)	of_get_property(node, "compatible", NULL) ?: "none");
+			} else if (mc->compare == component_compare_dev && mc->data) {
+				struct device *target_dev = (struct device *)mc->data;
+				dev_dbg(adev->parent,
+					"Component %zu missing: device '%s' (driver: %s)\n",
+					i, dev_name(target_dev),
+					target_dev->driver ? target_dev->driver->name : "no-driver");
+			} else if (mc->compare == component_compare_dev_name && mc->data) {
+				const char *dev_name_str = (const char *)mc->data;
+				dev_dbg(adev->parent,
+					"Component %zu missing: device name '%s'\n",
+					i, dev_name_str);
+			} else {
+				/* Generic fallback for custom comparison functions */
+				dev_dbg(adev->parent,
+					"Component %zu missing: custom compare func %pS with data %p\n",
+					i, mc->compare, mc->data);
+			}
+
+			/* List all available components for debugging */
+			dev_dbg(adev->parent, "Available components:\n");
+			list_for_each_entry(c, &component_list, node) {
+				dev_dbg(adev->parent, "  - %s (driver: %s, bound: %s)\n",
+					dev_name(c->dev),
+					c->dev->driver ? c->dev->driver->name : "no-driver",
+					c->adev ? "yes" : "no");
+			}
+
 			ret = -ENXIO;
 			break;
 		}

@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Input sensor driver configuration
+#
+
+menuconfig INPUT_SENSORS
+	bool "Sensors"
+	help
+	  Say Y here, and a list of supported sensors will be displayed.
+	  This option doesn't affect the kernel.
+
+	  If unsure, say Y.
+
+if INPUT_SENSORS
+
+source "drivers/input/sensors/hall/Kconfig"
+source "drivers/input/sensors/fingerprint/Kconfig"
+
+endif

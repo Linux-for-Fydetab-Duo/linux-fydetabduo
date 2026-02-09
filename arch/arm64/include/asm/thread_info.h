@@ -17,6 +17,10 @@ struct task_struct;
 #include <asm/memory.h>
 #include <asm/stack_pointer.h>
 #include <asm/types.h>
+#include <asm/unistd.h>
+#ifdef CONFIG_COMPAT
+#include <asm/unistd_compat_32.h>
+#endif
 
 /*
  * low level task data that entry.S needs immediate access to.
@@ -43,7 +47,31 @@ struct thread_info {
 	void			*scs_sp;
 #endif
 	u32			cpu;
+#ifdef CONFIG_ALT_SYSCALL
+  unsigned int    nr_syscalls;
+  const void    *sys_call_table;
+#ifdef CONFIG_COMPAT
+  unsigned int    compat_nr_syscalls;
+  const void    *compat_sys_call_table;
+#endif
+#endif
 };
+
+#ifdef CONFIG_ALT_SYSCALL
+#ifdef CONFIG_COMPAT
+#define INIT_THREAD_INFO_SYSCALL_COMPAT       \
+  .compat_nr_syscalls = __NR_compat32_syscalls,   \
+  .compat_sys_call_table  = &compat_sys_call_table,
+#else
+#define INIT_THREAD_INFO_SYSCALL_COMPAT
+#endif
+#define INIT_THREAD_INFO_SYSCALL        \
+  .nr_syscalls    = __NR_syscalls,    \
+  .sys_call_table   = &sys_call_table,    \
+  INIT_THREAD_INFO_SYSCALL_COMPAT
+#else
+#define INIT_THREAD_INFO_SYSCALL
+#endif
 
 #define thread_saved_pc(tsk)	\
 	((unsigned long)(tsk->thread.cpu_context.pc))
@@ -122,6 +150,7 @@ void arch_setup_new_exec(void);
 	.flags		= _TIF_FOREIGN_FPSTATE,				\
 	.preempt_count	= INIT_PREEMPT_COUNT,				\
 	INIT_SCS							\
+  INIT_THREAD_INFO_SYSCALL					\
 }
 
 #endif /* __ASM_THREAD_INFO_H */

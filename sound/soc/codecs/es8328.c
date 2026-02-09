@@ -9,6 +9,7 @@
 
 #include <linux/clk.h>
 #include <linux/delay.h>
+#include <linux/of_device.h>
 #include <linux/module.h>
 #include <linux/pm.h>
 #include <linux/regmap.h>
@@ -33,6 +34,16 @@ static const int ratios_12288[] = {
 static const struct snd_pcm_hw_constraint_list constraints_12288 = {
 	.count	= ARRAY_SIZE(rates_12288),
 	.list	= rates_12288,
+};
+
+static unsigned int ratios_12000[] = {
+	8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000,
+	48000, 88235, 96000,
+};
+
+static struct snd_pcm_hw_constraint_list constraints_12000 = {
+	.count = ARRAY_SIZE(ratios_12000),
+	.list = ratios_12000,
 };
 
 static const unsigned int rates_11289[] = {
@@ -549,15 +560,8 @@ static int es8328_set_sysclk(struct snd_soc_dai *codec_dai,
 	struct snd_soc_component *component = codec_dai->component;
 	struct es8328_priv *es8328 = snd_soc_component_get_drvdata(component);
 	int mclkdiv2 = 0;
-	unsigned int round_freq;
 
-	/*
-	 * Allow a small tolerance for frequencies within 100hz. Note
-	 * this value is chosen arbitrarily.
-	 */
-	round_freq = DIV_ROUND_CLOSEST(freq, 100) * 100;
-
-	switch (round_freq) {
+	switch (freq) {
 	case 0:
 		es8328->sysclk_constraints = NULL;
 		es8328->mclk_ratios = NULL;
@@ -575,6 +579,14 @@ static int es8328_set_sysclk(struct snd_soc_dai *codec_dai,
 	case 12288000:
 		es8328->sysclk_constraints = &constraints_12288;
 		es8328->mclk_ratios = ratios_12288;
+		break;
+
+	case 24000000:
+		mclkdiv2 = 1;
+		fallthrough;
+	case 12000000:
+		es8328->sysclk_constraints = &constraints_12000;
+		es8328->mclk_ratios = ratios_12000;
 		break;
 	default:
 		return -EINVAL;
@@ -821,7 +833,7 @@ const struct regmap_config es8328_regmap_config = {
 	.reg_bits	= 8,
 	.val_bits	= 8,
 	.max_register	= ES8328_REG_MAX,
-	.cache_type	= REGCACHE_MAPLE,
+	.cache_type	= REGCACHE_RBTREE,
 	.use_single_read = true,
 	.use_single_write = true,
 };

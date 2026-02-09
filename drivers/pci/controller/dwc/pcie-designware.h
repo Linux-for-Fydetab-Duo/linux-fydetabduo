@@ -71,6 +71,7 @@
 /* Synopsys-specific PCIe configuration registers */
 #define PCIE_PORT_FORCE			0x708
 #define PORT_FORCE_DO_DESKEW_FOR_SRIS	BIT(23)
+#define PORT_LINK_LPBK_ENABLE           BIT(2)
 
 #define PCIE_PORT_AFR			0x70C
 #define PORT_AFR_N_FTS_MASK		GENMASK(15, 8)

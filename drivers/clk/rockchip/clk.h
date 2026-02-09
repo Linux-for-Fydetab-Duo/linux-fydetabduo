@@ -1081,4 +1081,13 @@ static inline void rockchip_register_softrst(struct device_node *np,
 void rk3576_rst_init(struct device_node *np, void __iomem *reg_base);
 void rk3588_rst_init(struct device_node *np, void __iomem *reg_base);
 
+/* PLL scaling functions for OPP */
+int rockchip_pll_clk_rate_to_scale(struct clk *clk, unsigned long rate);
+int rockchip_pll_clk_scale_to_rate(struct clk *clk, unsigned int scale);
+int rockchip_pll_clk_adaptive_scaling(struct clk *clk, int sel);
+
+/* DDR clock functions */
+void rockchip_set_ddrclk_params(void __iomem *params);
+void rockchip_set_ddrclk_dmcfreq_wait_complete(int (*func)(void));
+
 #endif

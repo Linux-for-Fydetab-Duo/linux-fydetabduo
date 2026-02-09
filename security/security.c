@@ -1236,6 +1236,7 @@ int security_vm_enough_memory_mm(struct mm_struct *mm, long pages)
 	}
 	return __vm_enough_memory(mm, pages, cap_sys_admin);
 }
+EXPORT_SYMBOL(security_path_chown);
 
 /**
  * security_bprm_creds_for_exec() - Prepare the credentials for exec()

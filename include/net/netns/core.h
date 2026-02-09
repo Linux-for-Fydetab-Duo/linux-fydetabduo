@@ -14,6 +14,7 @@ struct netns_core {
 
 	int	sysctl_somaxconn;
 	int	sysctl_optmem_max;
+  int sysctl_android_paranoid;
 	u8	sysctl_txrehash;
 
 #ifdef CONFIG_PROC_FS

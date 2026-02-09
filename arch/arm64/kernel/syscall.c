@@ -148,13 +148,26 @@ trace_exit:
 
 void do_el0_svc(struct pt_regs *regs)
 {
+#ifdef CONFIG_ALT_SYSCALL
+  struct thread_info __maybe_unused *ti;
+  ti = current_thread_info();
+  el0_svc_common(regs, regs->regs[8], ti->nr_syscalls,
+        ti->sys_call_table);
+#else
 	el0_svc_common(regs, regs->regs[8], __NR_syscalls, sys_call_table);
+#endif //CONFIG_ALT_SYSCALL
 }
 
 #ifdef CONFIG_COMPAT
 void do_el0_svc_compat(struct pt_regs *regs)
 {
+#ifdef CONFIG_ALT_SYSCALL
+  struct thread_info *ti = current_thread_info();
+  el0_svc_common(regs, regs->regs[7], ti->compat_nr_syscalls,
+        ti->compat_sys_call_table);
+#else
 	el0_svc_common(regs, regs->regs[7], __NR_compat32_syscalls,
 		       compat_sys_call_table);
+#endif //CONFIG_ALT_SYSCALL
 }
 #endif

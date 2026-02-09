@@ -1050,7 +1050,6 @@ static int tcpm_mux_set(struct tcpm_port *port, int state,
 		if (ret)
 			return ret;
 	}
-
 	return typec_set_mode(port->typec_port, state);
 }
 
@@ -7572,7 +7571,7 @@ static int devm_tcpm_psy_register(struct tcpm_port *port)
 	snprintf(psy_name, psy_name_len, "%s%s", tcpm_psy_name_prefix,
 		 port_dev_name);
 	port->psy_desc.name = psy_name;
-	port->psy_desc.type = POWER_SUPPLY_TYPE_USB;
+	port->psy_desc.type = POWER_SUPPLY_TYPE_USB_TYPE_C;
 	port->psy_desc.usb_types = BIT(POWER_SUPPLY_USB_TYPE_C)  |
 				   BIT(POWER_SUPPLY_USB_TYPE_PD) |
 				   BIT(POWER_SUPPLY_USB_TYPE_PD_PPS);
@@ -7710,6 +7709,8 @@ struct tcpm_port *tcpm_register_port(struct device *dev, struct tcpc_dev *tcpc)
 
 	if (port->pds)
 		port->typec_caps.pd = port->pds[0];
+
+	port->typec_caps.fwnode = tcpc->fwnode;
 
 	port->typec_port = typec_register_port(port->dev, &port->typec_caps);
 	if (IS_ERR(port->typec_port)) {

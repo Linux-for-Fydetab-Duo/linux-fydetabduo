@@ -585,6 +585,11 @@ static int hantro_set_fmt_cap(struct hantro_ctx *ctx,
 	if (ret)
 		return ret;
 
+	dev_info(ctx->dev->dev, "AV1 set_fmt_cap: APPLIED fmt=0x%x w=%d h=%d stride=%d->%d\n",
+		 pix_mp->pixelformat, pix_mp->width, pix_mp->height,
+		 ctx->dst_fmt.plane_fmt[0].bytesperline,
+		 pix_mp->plane_fmt[0].bytesperline);
+
 	ctx->vpu_dst_fmt = hantro_find_format(ctx, pix_mp->pixelformat);
 	ctx->dst_fmt = *pix_mp;
 

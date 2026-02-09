@@ -343,3 +343,19 @@ config USB_ONBOARD_DEV_USB5744
 	  during hub start-up configuration stage. It is must to enable this
 	  option on AMD Kria KR260 Robotics Starter Kit as this hub is
 	  connected to USB-SD converter which mounts the root filesystem.
+
+config USB_FYDE_VDTB
+	tristate "Fyde Virtual Detachable driver support"
+	depends on INPUT
+	help
+	  Say Y here if you want to support the Fyde Virtual Detachable
+	  driver that detects tablet mode by monitoring USB keyboard
+	  connections. This driver provides tablet mode detection for
+	  ChromeOS devices by tracking USB keyboard attach/detach events.
+
+	  The driver creates a misc device /dev/vdtb that can be used
+	  to manually control tablet mode state, and also automatically
+	  switches to tablet mode when no USB keyboards are detected.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called fyde-vdtb.

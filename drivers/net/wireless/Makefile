@@ -24,3 +24,4 @@ obj-$(CONFIG_WLAN_VENDOR_ZYDAS) += zydas/
 
 obj-$(CONFIG_WLAN) += virtual/
 obj-$(CONFIG_IWL7000) += iwl7000/
+obj-$(CONFIG_WL_ROCKCHIP) += rockchip_wlan/

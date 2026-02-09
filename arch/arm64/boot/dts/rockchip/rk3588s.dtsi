@@ -6,3 +6,5 @@
 
 #include "rk3588-base.dtsi"
 #include "rk3588-opp.dtsi"
+#include "rk3588s-rockchip.dtsi"
+#include "rk3588s-mpp.dtsi"

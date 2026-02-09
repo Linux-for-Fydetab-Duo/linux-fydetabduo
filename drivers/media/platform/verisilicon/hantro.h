@@ -206,6 +206,9 @@ struct hantro_dev {
 	void __iomem *enc_base;
 	void __iomem *dec_base;
 	void __iomem *ctrl_base;
+	void __iomem *cache_base;	/* RK3588 AV1 cache registers */
+	void __iomem *afbc_base;	/* RK3588 AV1 afbc registers */
+	bool afbc_initialized;		/* RK3588 AV1 AFBC init flag */
 
 	struct mutex vpu_mutex;	/* video_device lock */
 	spinlock_t irqlock;

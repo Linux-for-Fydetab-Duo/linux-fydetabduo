@@ -10,6 +10,34 @@
 #include "hantro_v4l2.h"
 #include "rockchip_vpu981_regs.h"
 
+/* Module parameters for PP debugging */
+static int pp_in_blk_size = 0;
+module_param(pp_in_blk_size, int, 0644);
+MODULE_PARM_DESC(pp_in_blk_size, "PP input block size (0-7, default 0)");
+
+static int pp_out_format = 3;
+module_param(pp_out_format, int, 0644);
+MODULE_PARM_DESC(pp_out_format, "PP output format for NV12 (0-31, default 3)");
+
+static int pp_in_format = 0;
+module_param(pp_in_format, int, 0644);
+MODULE_PARM_DESC(pp_in_format, "PP input format (0-31, default 0)");
+
+static int pp_tile_mode = 0;
+module_param(pp_tile_mode, int, 0644);
+MODULE_PARM_DESC(pp_tile_mode, "PP tile mode: 0=480x270, 1=240x135 (default 0)");
+
+/* AFBC register offsets (based on MPP driver) */
+#define AFBC_REG_CONTROL		0x20
+#define AFBC_REG_INTRENBL		0x34
+#define AFBC_REG_FORMAT			0x100
+#define AFBC_REG_COMPRESSENABLE		0x104
+#define AFBC_REG_HEADERBASE		0x10c
+#define AFBC_REG_PAYLOADBASE		0x114
+#define AFBC_REG_INPUTBUFSIZE		0x11c
+#define AFBC_REG_INPUTBUFBASE		0x124
+#define AFBC_REG_INPUTBUFSTRIDE		0x12c
+
 #define AV1_DEC_MODE		17
 #define GM_GLOBAL_MODELS_PER_FRAME	7
 #define GLOBAL_MODEL_TOTAL_SIZE	(6 * 4 + 4 * 2)
@@ -417,6 +445,39 @@ int rockchip_vpu981_av1_dec_init(struct hantro_ctx *ctx)
 	av1_dec->tile_buf.size = AV1_TILE_SIZE;
 
 	return 0;
+}
+
+/*
+ * Initialize AFBC hardware (called once on first frame, with interrupts enabled)
+ */
+static void rockchip_vpu981_av1_afbc_init(struct hantro_dev *vpu)
+{
+	if (!vpu->afbc_base || vpu->afbc_initialized)
+		return;
+
+	/* Initialize AFBC but keep compression disabled for V4L2 */
+	writel_relaxed(0, vpu->afbc_base + AFBC_REG_CONTROL);
+	writel_relaxed(0, vpu->afbc_base + AFBC_REG_INTRENBL);
+	writel_relaxed(0, vpu->afbc_base + AFBC_REG_COMPRESSENABLE);
+	writel_relaxed(0, vpu->afbc_base + AFBC_REG_COMPRESSENABLE + 4);
+
+	vpu->afbc_initialized = true;
+	dev_info(vpu->dev, "AFBC initialized (compression disabled)\n");
+}
+
+/*
+ * Clear L2 cache status (called per frame, based on MPP driver)
+ * Note: Moved to IRQ handler to match MPP timing
+ */
+static void __attribute__ ((unused)) rockchip_vpu981_av1_clear_cache(struct hantro_dev *vpu)
+{
+	if (!vpu->cache_base)
+		return;
+
+	/* Clear L2 cache status registers */
+	writel_relaxed(0x0, vpu->cache_base + 0x020);
+	writel_relaxed(0x0, vpu->cache_base + 0x204);
+	writel_relaxed(0x00000000, vpu->cache_base + 0x208); /* multi id enable bit */
 }
 
 static int rockchip_vpu981_av1_dec_prepare_run(struct hantro_ctx *ctx)
@@ -1567,6 +1628,11 @@ static void rockchip_vpu981_av1_dec_set_picture_dimensions(struct hantro_ctx *ct
 	struct hantro_dev *vpu = ctx->dev;
 	int pic_width_in_cbs = DIV_ROUND_UP(frame->frame_width_minus_1 + 1, 8);
 	int pic_height_in_cbs = DIV_ROUND_UP(frame->frame_height_minus_1 + 1, 8);
+
+	dev_info(vpu->dev, "AV1 DEC: frame dimensions w=%d h=%d upscaled_w=%d superres_denom=%d (in_cbs: %d x %d)\n",
+		 frame->frame_width_minus_1 + 1, frame->frame_height_minus_1 + 1,
+		 frame->upscaled_width, frame->superres_denom,
+		 pic_width_in_cbs, pic_height_in_cbs);
 	int pic_width_pad = ALIGN(frame->frame_width_minus_1 + 1, 8)
 			    - (frame->frame_width_minus_1 + 1);
 	int pic_height_pad = ALIGN(frame->frame_height_minus_1 + 1, 8)
@@ -2102,6 +2168,12 @@ int rockchip_vpu981_av1_dec_run(struct hantro_ctx *ctx)
 
 	hantro_start_prepare_run(ctx);
 
+	/* Initialize AFBC hardware on first frame */
+	rockchip_vpu981_av1_afbc_init(vpu);
+
+	/* Note: MPP clears cache AFTER decode in ISR, not before */
+	/* Removed: rockchip_vpu981_av1_clear_cache(vpu); */
+
 	ret = rockchip_vpu981_av1_dec_prepare_run(ctx);
 	if (ret)
 		goto prepare_error;
@@ -2168,11 +2240,43 @@ prepare_error:
 static void rockchip_vpu981_postproc_enable(struct hantro_ctx *ctx)
 {
 	struct hantro_dev *vpu = ctx->dev;
-	int width = ctx->dst_fmt.width;
-	int height = ctx->dst_fmt.height;
+	struct hantro_av1_dec_hw_ctx *av1_dec = &ctx->av1_dec;
+	struct hantro_av1_dec_ctrls *ctrls = &av1_dec->ctrls;
+	const struct v4l2_ctrl_av1_frame *frame = ctrls->frame;
 	struct vb2_v4l2_buffer *vb2_dst;
 	size_t chroma_offset;
 	dma_addr_t dst_dma;
+	int width = ctx->dst_fmt.width;
+	int height = ctx->dst_fmt.height;
+	int width_in_cbs, height_in_cbs;
+
+	/* Decoder outputs 4x4 tiled format - PP input dimensions are in 4x4 tile units */
+	int actual_width, actual_height;
+	int width_in_tiles, height_in_tiles;
+
+	if (frame) {
+		actual_width = frame->frame_width_minus_1 + 1;
+		actual_height = frame->frame_height_minus_1 + 1;
+		width_in_cbs = DIV_ROUND_UP(actual_width, 8);
+		height_in_cbs = DIV_ROUND_UP(actual_height, 8);
+	} else {
+		actual_width = width;
+		actual_height = height;
+		width_in_cbs = DIV_ROUND_UP(width, 8);
+		height_in_cbs = DIV_ROUND_UP(height, 8);
+	}
+
+	/* PP input is in 4x4 tile units, not 8x8 block units! */
+	width_in_tiles = DIV_ROUND_UP(actual_width, 4);
+	height_in_tiles = DIV_ROUND_UP(actual_height, 4);
+
+	dev_info(vpu->dev, "AV1 PP: enable - w=%d h=%d fmt=0x%x stride=%d | PP cfg: in=%dx%d out=%dx%d cbs=%dx%d | blk_size=%d in_fmt=%d out_fmt=%d\n",
+		 width, height, ctx->dst_fmt.pixelformat,
+		 ctx->dst_fmt.plane_fmt[0].bytesperline,
+		 width, height,  /* PP input: full frame */
+		 width, height,  /* PP output: full frame */
+		 width_in_cbs, height_in_cbs,
+		 pp_in_blk_size, pp_in_format, pp_out_format);
 
 	vb2_dst = hantro_get_dst_buf(ctx);
 
@@ -2180,14 +2284,19 @@ static void rockchip_vpu981_postproc_enable(struct hantro_ctx *ctx)
 	chroma_offset = ctx->dst_fmt.plane_fmt[0].bytesperline *
 	    ctx->dst_fmt.height;
 
+	dev_info(vpu->dev, "AV1 PP: DMA addrs - luma=0x%pad chroma=0x%pad (offset=%zu)\n",
+		 &dst_dma, &(dma_addr_t){dst_dma + chroma_offset}, chroma_offset);
+
 	/* enable post processor */
 	hantro_reg_write(vpu, &av1_pp_out_e, 1);
-	hantro_reg_write(vpu, &av1_pp_in_format, 0);
-	hantro_reg_write(vpu, &av1_pp0_dup_hor, 1);
-	hantro_reg_write(vpu, &av1_pp0_dup_ver, 1);
+	hantro_reg_write(vpu, &av1_pp_in_blk_size, pp_in_blk_size);
+	hantro_reg_write(vpu, &av1_pp_in_format, pp_in_format);
+	hantro_reg_write(vpu, &av1_pp0_dup_hor, 0);
+	hantro_reg_write(vpu, &av1_pp0_dup_ver, 0);
 
-	hantro_reg_write(vpu, &av1_pp_in_height, height / 2);
-	hantro_reg_write(vpu, &av1_pp_in_width, width / 2);
+	/* PP input/output should be full frame dimensions (matching MPP behavior) */
+	hantro_reg_write(vpu, &av1_pp_in_height, height);
+	hantro_reg_write(vpu, &av1_pp_in_width, width);
 	hantro_reg_write(vpu, &av1_pp_out_height, height);
 	hantro_reg_write(vpu, &av1_pp_out_width, width);
 	hantro_reg_write(vpu, &av1_pp_out_y_stride,
@@ -2197,12 +2306,16 @@ static void rockchip_vpu981_postproc_enable(struct hantro_ctx *ctx)
 	switch (ctx->dst_fmt.pixelformat) {
 	case V4L2_PIX_FMT_P010:
 		hantro_reg_write(vpu, &av1_pp_out_format, 1);
+		dev_info(vpu->dev, "AV1 PP: output format P010 (code=1)\n");
 		break;
 	case V4L2_PIX_FMT_NV12:
-		hantro_reg_write(vpu, &av1_pp_out_format, 3);
+		hantro_reg_write(vpu, &av1_pp_out_format, pp_out_format);
+		dev_info(vpu->dev, "AV1 PP: output format NV12 (code=%d)\n", pp_out_format);
 		break;
 	default:
 		hantro_reg_write(vpu, &av1_pp_out_format, 0);
+		dev_info(vpu->dev, "AV1 PP: output format UNKNOWN (code=0, fmt=0x%x)\n",
+			 ctx->dst_fmt.pixelformat);
 	}
 
 	hantro_reg_write(vpu, &av1_ppd_blend_exist, 0);

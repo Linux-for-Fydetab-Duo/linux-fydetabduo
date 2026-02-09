@@ -135,6 +135,12 @@ config DRM_PANEL_FEIYANG_FY07024DI26A30D
 	  Say Y if you want to enable support for panels based on the
 	  Feiyang FY07024DI26A30-D MIPI-DSI interface.
 
+config DRM_PANEL_FYDETAB
+	tristate "LCD panel on FydeTab with MIPI interface"
+	depends on DRM_MIPI_DSI
+	help
+	  Say Y here if you want to enable support for FydeTab 1600x2600 LCD panel.
+
 config DRM_PANEL_DSI_CM
 	tristate "Generic DSI command mode panels"
 	depends on OF

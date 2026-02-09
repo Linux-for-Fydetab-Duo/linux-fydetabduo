@@ -144,7 +144,7 @@ typedef const struct iio_mount_matrix *
  */
 #define IIO_MOUNT_MATRIX(_shared, _get) \
 { \
-	.name = "mount_matrix", \
+	.name = "in_accel_mount_matrix", \
 	.shared = (_shared), \
 	.read = iio_show_mount_matrix, \
 	.private = (uintptr_t)(_get), \

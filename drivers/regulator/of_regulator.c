@@ -12,6 +12,7 @@
 #include <linux/regulator/machine.h>
 #include <linux/regulator/driver.h>
 #include <linux/regulator/of_regulator.h>
+#include <linux/rockchip/rockchip_pm_config.h>
 
 #include "internal.h"
 
@@ -630,7 +631,7 @@ static struct device_node *of_get_regulator(struct device *dev, struct device_no
 	return NULL;
 }
 
-static struct regulator_dev *of_find_regulator_by_node(struct device_node *np)
+struct regulator_dev *of_find_regulator_by_node(struct device_node *np)
 {
 	struct device *dev;
 
@@ -638,6 +639,7 @@ static struct regulator_dev *of_find_regulator_by_node(struct device_node *np)
 
 	return dev ? dev_to_rdev(dev) : NULL;
 }
+EXPORT_SYMBOL_GPL(of_find_regulator_by_node);
 
 /**
  * of_regulator_dev_lookup - lookup a regulator device with device tree only

@@ -458,6 +458,17 @@ config PINCTRL_RK805
 	help
 	  This selects the pinctrl driver for RK805.
 
+config PINCTRL_RK806
+	tristate "Pinctrl and GPIO driver for RK806 PMIC"
+	depends on MFD_RK8XX
+	select GPIOLIB
+	select PINMUX
+	select GENERIC_PINCONF
+	help
+	  This selects the pinctrl driver for RK806. The RK806 PMIC
+	  provides 3 pins that can be used as GPIO or for power control
+	  functions like DVS, sleep, reset, etc.
+
 config PINCTRL_ROCKCHIP
 	tristate "Rockchip gpio and pinctrl driver"
 	depends on ARCH_ROCKCHIP || COMPILE_TEST

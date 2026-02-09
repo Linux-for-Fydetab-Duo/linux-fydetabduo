@@ -114,4 +114,17 @@ config CLK_RK3588
 	help
 	  Build the driver for RK3588 Clock Driver.
 
+config CLK_OUT
+	tristate "Rockchip clock output switch driver"
+	depends on ARM64 || COMPILE_TEST
+	help
+	  Build the driver for Rockchip clock output switch.
+	  This driver provides configurable clock output functionality
+	  allowing external devices to use internal clocks.
+
+config ROCKCHIP_CLK_COMPENSATION
+       bool "Rockchip Clk Compensation"
+       help
+         Say y here to enable clk compensation(+/- 1000 ppm).
+
 endif

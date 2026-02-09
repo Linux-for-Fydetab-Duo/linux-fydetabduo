@@ -22,6 +22,8 @@ struct device_node;
 extern int of_get_named_gpio(const struct device_node *np,
 			     const char *list_name, int index);
 
+extern int of_get_named_gpio_flags_legacy(const struct device_node *np,
+        const char *list_name, int index, unsigned long *flags);
 #else /* CONFIG_OF_GPIO */
 
 #include <linux/errno.h>
@@ -31,6 +33,12 @@ static inline int of_get_named_gpio(const struct device_node *np,
                                    const char *propname, int index)
 {
 	return -ENOSYS;
+}
+
+static inline int of_get_named_gpio_flags_legacy(const struct device_node *np,
+        const char *list_name, int index, unsigned long *flags)
+{
+  return -ENOSYS;
 }
 
 #endif /* CONFIG_OF_GPIO */

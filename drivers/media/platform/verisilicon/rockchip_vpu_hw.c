@@ -417,10 +417,47 @@ static irqreturn_t rk3588_vpu981_irq(int irq, void *dev_id)
 	state = (status & AV1_REG_INTERRUPT_DEC_RDY_INT) ?
 		VB2_BUF_STATE_DONE : VB2_BUF_STATE_ERROR;
 
+	/* Log decode completion */
+	dev_info(vpu->dev, "AV1 IRQ: status=0x%08x state=%s\n",
+		 status, state == VB2_BUF_STATE_DONE ? "DONE" : "ERROR");
+
 	vdpu_write(vpu, 0, AV1_REG_INTERRUPT);
 	vdpu_write(vpu, AV1_REG_CONFIG_DEC_CLK_GATE_E, AV1_REG_CONFIG);
 
+	/* Clear L2 cache status after decode (matching MPP behavior) */
+	if (vpu->cache_base) {
+		writel_relaxed(0x0, vpu->cache_base + 0x020);
+		writel_relaxed(0x0, vpu->cache_base + 0x204);
+		writel_relaxed(0x00000000, vpu->cache_base + 0x208);
+	}
+
 	hantro_irq_done(vpu, state);
+
+	return IRQ_HANDLED;
+}
+
+static irqreturn_t rk3588_vpu981_cache_irq(int irq, void *dev_id)
+{
+	struct hantro_dev *vpu = dev_id;
+
+	/* Cache interrupt - just acknowledge it */
+	if (vpu->cache_base) {
+		/* Clear cache interrupt status if needed */
+		writel_relaxed(0, vpu->cache_base + 0x020);
+	}
+
+	return IRQ_HANDLED;
+}
+
+static irqreturn_t rk3588_vpu981_afbc_irq(int irq, void *dev_id)
+{
+	struct hantro_dev *vpu = dev_id;
+
+	/* AFBC interrupt - just acknowledge it */
+	if (vpu->afbc_base) {
+		/* Clear AFBC interrupt status */
+		writel_relaxed(0, vpu->afbc_base + 0x34); /* INTRENBL */
+	}
 
 	return IRQ_HANDLED;
 }
@@ -442,8 +479,28 @@ static int rk3066_vpu_hw_init(struct hantro_dev *vpu)
 
 static int rk3588_vpu981_hw_init(struct hantro_dev *vpu)
 {
+	int ret;
+	unsigned long rate;
+
 	/* Bump ACLKs to max. possible freq. to improve performance. */
-	clk_set_rate(vpu->clocks[0].clk, RK3588_ACLK_MAX_FREQ);
+	dev_info(vpu->dev, "RK3588 VPU981: Setting clocks to 400MHz\n");
+
+	ret = clk_set_rate(vpu->clocks[0].clk, 400 * 1000 * 1000);  /* aclk to 400MHz */
+	rate = clk_get_rate(vpu->clocks[0].clk);
+	dev_info(vpu->dev, "RK3588 VPU981: aclk set_rate ret=%d, actual rate=%lu\n", ret, rate);
+
+	ret = clk_set_rate(vpu->clocks[1].clk, 400 * 1000 * 1000);  /* hclk to 400MHz */
+	rate = clk_get_rate(vpu->clocks[1].clk);
+	dev_info(vpu->dev, "RK3588 VPU981: hclk set_rate ret=%d, actual rate=%lu\n", ret, rate);
+
+	/* Initialize cache and afbc register bases */
+	if (vpu->variant->num_regs >= 3) {
+		vpu->cache_base = vpu->reg_bases[1];  /* cache is 2nd region */
+		vpu->afbc_base = vpu->reg_bases[2];   /* afbc is 3rd region */
+		dev_info(vpu->dev, "RK3588 VPU981: cache_base=%p afbc_base=%p\n",
+			 vpu->cache_base, vpu->afbc_base);
+	}
+
 	return 0;
 }
 
@@ -640,6 +697,8 @@ static const char * const rk3066_vpu_clk_names[] = {
 
 static const struct hantro_irq rk3588_vpu981_irqs[] = {
 	{ "vdpu", rk3588_vpu981_irq },
+	{ "irq_cache", rk3588_vpu981_cache_irq },
+	{ "irq_afbc", rk3588_vpu981_afbc_irq },
 };
 
 static const char * const rockchip_vpu_clk_names[] = {
@@ -796,6 +855,10 @@ const struct hantro_variant px30_vpu_variant = {
 	.num_clocks = ARRAY_SIZE(rockchip_vpu_clk_names)
 };
 
+static const char * const rk3588_vpu981_reg_names[] = {
+	"vcd", "cache", "afbc"
+};
+
 const struct hantro_variant rk3588_vpu981_variant = {
 	.dec_offset = 0x0,
 	.dec_fmts = rockchip_vpu981_dec_fmts,
@@ -809,5 +872,8 @@ const struct hantro_variant rk3588_vpu981_variant = {
 	.num_irqs = ARRAY_SIZE(rk3588_vpu981_irqs),
 	.init = rk3588_vpu981_hw_init,
 	.clk_names = rk3588_vpu981_vpu_clk_names,
-	.num_clocks = ARRAY_SIZE(rk3588_vpu981_vpu_clk_names)
+	.num_clocks = ARRAY_SIZE(rk3588_vpu981_vpu_clk_names),
+	.reg_names = rk3588_vpu981_reg_names,
+	.num_regs = ARRAY_SIZE(rk3588_vpu981_reg_names),
+	.late_postproc = true,
 };

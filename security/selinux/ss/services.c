@@ -2122,7 +2122,8 @@ bad:
 	return 0;
 }
 
-static void security_load_policycaps(struct selinux_policy *policy)
+static void security_load_policycaps(struct selinux_state *state,
+        struct selinux_policy *policy)
 {
 	struct policydb *p;
 	unsigned int i;
@@ -2144,6 +2145,10 @@ static void security_load_policycaps(struct selinux_policy *policy)
 			pr_info("SELinux:  unknown policy capability %u\n",
 				i);
 	}
+
+	state->android_netlink_route = p->android_netlink_route;
+	state->android_netlink_getneigh = p->android_netlink_getneigh;
+	selinux_nlmsg_init();
 }
 
 static int security_preserve_bools(struct selinux_policy *oldpolicy,
@@ -2226,7 +2231,7 @@ void selinux_policy_commit(struct selinux_load_state *load_state)
 	}
 
 	/* Load the policycaps from the new policy */
-	security_load_policycaps(newpolicy);
+	security_load_policycaps(state, newpolicy);
 
 	if (!selinux_initialized()) {
 		/*

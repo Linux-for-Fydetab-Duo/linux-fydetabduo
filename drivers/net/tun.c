@@ -3096,6 +3096,12 @@ static long __tun_chr_ioctl(struct file *file, unsigned int cmd,
 	int ret;
 	bool do_notify = false;
 
+  if (current->nsproxy->net_ns->core.sysctl_android_paranoid &&
+      cmd != TUNGETIFF &&
+      !ns_capable(sock_net(&tfile->sk)->user_ns, CAP_NET_ADMIN)) {
+          return -EPERM;
+  }
+
 	if (cmd == TUNSETIFF || cmd == TUNSETQUEUE ||
 	    (_IOC_TYPE(cmd) == SOCK_IOC_TYPE && cmd != SIOCGSKNS)) {
 		if (copy_from_user(&ifr, argp, ifreq_len))
@@ -3495,7 +3501,7 @@ static int tun_chr_open(struct inode *inode, struct file * file)
 	tfile->socket.file = file;
 	tfile->socket.ops = &tun_socket_ops;
 
-	sock_init_data_uid(&tfile->socket, &tfile->sk, current_fsuid());
+	sock_init_data_uid(&tfile->socket, &tfile->sk, inode->i_uid);
 
 	tfile->sk.sk_write_space = tun_sock_write_space;
 	tfile->sk.sk_sndbuf = INT_MAX;

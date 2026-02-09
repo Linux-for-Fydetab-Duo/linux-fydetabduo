@@ -137,3 +137,22 @@ struct clk *rockchip_clk_register_ddrclk(const char *name, int flags,
 	return clk;
 }
 EXPORT_SYMBOL_GPL(rockchip_clk_register_ddrclk);
+
+struct rockchip_ddrclk_data {
+	void __iomem *params;
+	int (*dmcfreq_wait_complete)(void);
+};
+
+static struct rockchip_ddrclk_data ddr_data = {NULL, NULL};
+
+void rockchip_set_ddrclk_params(void __iomem *params)
+{
+	ddr_data.params = params;
+}
+EXPORT_SYMBOL(rockchip_set_ddrclk_params);
+
+void rockchip_set_ddrclk_dmcfreq_wait_complete(int (*func)(void))
+{
+	ddr_data.dmcfreq_wait_complete = func;
+}
+EXPORT_SYMBOL(rockchip_set_ddrclk_dmcfreq_wait_complete);

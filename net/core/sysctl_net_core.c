@@ -636,6 +636,15 @@ static struct ctl_table net_core_table[] = {
 };
 
 static struct ctl_table netns_core_table[] = {
+	{
+		.procname	= "android_paranoid",
+		.data		= &init_net.core.sysctl_android_paranoid,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+		.proc_handler	= proc_dointvec_minmax
+	},
 #if IS_ENABLED(CONFIG_RPS)
 	{
 		.procname	= "rps_default_mask",
@@ -723,6 +732,9 @@ static __net_init int sysctl_core_net_init(struct net *net)
 {
 	size_t table_size = ARRAY_SIZE(netns_core_table);
 	struct ctl_table *tbl;
+  bool unprivileged = false;
+
+	net->core.sysctl_android_paranoid = 0;
 
 	tbl = netns_core_table;
 	if (!net_eq(net, &init_net)) {
@@ -739,9 +751,16 @@ static __net_init int sysctl_core_net_init(struct net *net)
 		}
 		for (; i < table_size; ++i)
 			tbl[i].mode &= ~0222;
+
+    /* Don't export sysctls other than android_paranoid
+     * to unprivileged users
+     */
+    if (net->user_ns != &init_user_ns) {
+      unprivileged = true;
+    }
 	}
 
-	net->core.sysctl_hdr = register_net_sysctl_sz(net, "net/core", tbl, table_size);
+	net->core.sysctl_hdr = register_net_sysctl_sz(net, "net/core", tbl, unprivileged ? 1 : table_size);
 	if (net->core.sysctl_hdr == NULL)
 		goto err_reg;
 

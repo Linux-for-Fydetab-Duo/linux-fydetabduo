@@ -16,16 +16,40 @@ config SND_SOC_ROCKCHIP_I2S
 	  Rockchip I2S device. The device supports up to maximum of
 	  8 channels each for play and record.
 
+config SND_SOC_ROCKCHIP_DLP
+	tristate
+
+config SND_SOC_ROCKCHIP_DLP_PCM
+	tristate "Rockchip Digital Loopback PCM Driver"
+	depends on SND_SOC_ROCKCHIP
+	select SND_SOC_ROCKCHIP_DLP
+	help
+	  Say Y or M if you want to add support for DLP driver for
+	  Rockchip DMA-Based Digital Loopback.
+
+config SND_SOC_ROCKCHIP_TRCM
+	tristate "Rockchip TRCM Pcm Driver"
+	depends on SND_SOC_ROCKCHIP
+	help
+	  Say Y or M if you want to add support for TRCM driver.
+
 config SND_SOC_ROCKCHIP_I2S_TDM
 	tristate "Rockchip I2S/TDM Device Driver"
 	depends on HAVE_CLK && SND_SOC_ROCKCHIP
 	select SND_SOC_GENERIC_DMAENGINE_PCM
+	select SND_SOC_ROCKCHIP_TRCM
 	help
 	  Say Y or M if you want to add support for the I2S/TDM driver for
 	  Rockchip I2S/TDM devices, found in Rockchip SoCs. These devices
 	  interface between the AHB bus and the I2S bus, and support up to a
 	  maximum of 8 channels each for playback and recording.
 
+config SND_SOC_ROCKCHIP_I2S_TDM_MULTI_LANES
+	bool "Rockchip TDM Multi Lanes"
+	depends on SND_SOC_ROCKCHIP_I2S_TDM
+	help
+	  Say Y or M if you want to add support for TDM Multi Lanes
+	  based on I2S_TDM controller.
 
 config SND_SOC_ROCKCHIP_PDM
 	tristate "Rockchip PDM Controller Driver"
@@ -77,6 +101,14 @@ config SND_SOC_RK3288_HDMI_ANALOG
 	  Say Y or M here if you want to add support for SoC audio on Rockchip
 	  RK3288 boards using an analog output and the built-in HDMI audio.
 
+config SND_SOC_ROCKCHIP_HDMI
+	tristate "ASoC support for Rockchip HDMI audio"
+	depends on SND_SOC_ROCKCHIP && HAVE_CLK
+	select SND_SOC_HDMI_CODEC
+	help
+	  Say Y or M here if you want to add support for SoC audio on Rockchip
+	  boards using built-in HDMI or external HDMI.
+
 config SND_SOC_RK3399_GRU_SOUND
 	tristate "ASoC support multiple codecs for Rockchip RK3399 GRU boards"
 	depends on SND_SOC_ROCKCHIP && I2C && GPIOLIB && HAVE_CLK && SPI
@@ -90,3 +122,12 @@ config SND_SOC_RK3399_GRU_SOUND
 	help
 	  Say Y or M here if you want to add support multiple codecs for SoC
 	  audio on Rockchip RK3399 GRU boards.
+
+config SND_SOC_ROCKCHIP_MULTICODECS
+	tristate "ASoC support for Rockchip multicodecs"
+	depends on SND_SOC_ROCKCHIP && HAVE_CLK
+	help
+	  Say Y or M here if you want to add support for SoC audio on Rockchip
+	  boards using multicodecs. This is a generic ASoC machine driver that
+	  supports multiple codec configurations.
+

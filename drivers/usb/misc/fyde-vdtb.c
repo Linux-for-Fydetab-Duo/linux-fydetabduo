@@ -1,0 +1,269 @@
+// SPDX-License-Identifier: GPL-2.0+
+/*
+ *  Fydeos detachable emulator driver
+ *
+ *  Copyright (C) 2019 Yang Tsao <yang@fydeos.io>
+ */
+#include <linux/input.h>
+#include <linux/miscdevice.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/uaccess.h>
+#include <linux/notifier.h>
+#include <linux/usb.h>
+#include <linux/suspend.h>
+#include <uapi/linux/hid.h>
+
+#define VDTB_DEV_NAME "fyde-vdtb"
+#define VDTB_DEVICE_MINOR  MISC_DYNAMIC_MINOR
+#define VDTB_DEVICE_ID "vdtb"
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Yang Tsao <yang@fydeos.io>");
+MODULE_DESCRIPTION("Detachable device driver Emulator");
+
+struct usb_kbd_entry {
+  struct usb_device *udev;
+  struct list_head node;
+};
+
+static LIST_HEAD(usb_kbd_list);
+static DEFINE_MUTEX(usb_kbd_lock);
+static atomic_t usb_kbd_count = ATOMIC_INIT(0);
+
+struct vdtb_priv {
+  struct input_dev *input_dev;
+  struct notifier_block nb;
+  struct notifier_block power_nb;
+  struct miscdevice misc;
+};
+
+static void usb_kbd_add(struct usb_device *udev)
+{
+    struct usb_kbd_entry *e, *tmp;
+    bool already_contain = false;
+    mutex_lock(&usb_kbd_lock);
+    list_for_each_entry_safe(e, tmp, &usb_kbd_list, node) {
+      if (e->udev == udev) {
+        already_contain = true;
+        break;
+      }
+    }
+    mutex_unlock(&usb_kbd_lock);
+    if (already_contain)
+      return;
+
+    e = kzalloc(sizeof(*e), GFP_KERNEL);
+    if (!e)
+        return;
+
+    e->udev = usb_get_dev(udev);
+
+    mutex_lock(&usb_kbd_lock);
+    list_add(&e->node, &usb_kbd_list);
+    atomic_inc(&usb_kbd_count);
+    mutex_unlock(&usb_kbd_lock);
+}
+
+static void usb_kbd_remove(struct usb_device *udev)
+{
+    struct usb_kbd_entry *e, *tmp;
+
+    mutex_lock(&usb_kbd_lock);
+    list_for_each_entry_safe(e, tmp, &usb_kbd_list, node) {
+        if (e->udev == udev) {
+            list_del(&e->node);
+            atomic_dec(&usb_kbd_count);
+            usb_put_dev(e->udev);
+            kfree(e);
+            break;
+        }
+    }
+    mutex_unlock(&usb_kbd_lock);
+}
+
+static void usb_kdb_free_list(void) {
+  struct usb_kbd_entry *e, *tmp;
+  mutex_lock(&usb_kbd_lock);
+  list_for_each_entry_safe(e, tmp, &usb_kbd_list, node) {
+    list_del(&e->node);
+    atomic_dec(&usb_kbd_count);
+    usb_put_dev(e->udev);
+    kfree(e);
+  }
+  mutex_unlock(&usb_kbd_lock);
+}
+
+static int usb_keyboard_count(void)
+{
+    return atomic_read(&usb_kbd_count);
+}
+
+
+static int vdtb_release(struct inode *inode, struct file *file) {return 0;}
+
+static inline int is_usb_device(const struct device *dev) {
+  if (!dev->type || !dev->type->name)
+    return 0;
+  return !strcmp(dev->type->name, "usb_device");
+}
+
+static inline struct vdtb_priv *to_vdtb_priv(struct miscdevice *misc) {
+  return container_of(misc, struct vdtb_priv, misc);
+}
+
+static void set_tablet_mode(struct vdtb_priv *priv, bool mode) {
+  input_report_switch(priv->input_dev, SW_TABLET_MODE, mode);
+  input_sync(priv->input_dev);
+}
+
+static ssize_t vdtb_read(struct file *file, char *buf, size_t count, loff_t *ppos) {
+  return -1;
+}
+
+static ssize_t vdtb_write(struct file *file, const char *buf, size_t count, loff_t *ppos) {
+  struct miscdevice *misc = (struct miscdevice *) file->private_data;
+  struct vdtb_priv *priv = to_vdtb_priv(misc);
+  char tmp_buf[3];
+  unsigned long n;
+  if (count > 3) return -1;
+  n = copy_from_user(tmp_buf, buf, count);
+  if (n) return -1;
+  if (priv) {
+    set_tablet_mode(priv, strncmp(tmp_buf, "1", 1) == 0);
+  }else{
+    return -1;
+  }
+  return count;
+}
+
+static long vdtb_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {return -1;}
+
+struct file_operations vdtb_fops = {
+  .owner = THIS_MODULE,
+  .release = vdtb_release,
+  .read = vdtb_read,
+  .write = vdtb_write,
+  .compat_ioctl = vdtb_ioctl,
+};
+
+static struct vdtb_priv *vdtb_priv_global;
+
+static bool contains_kbd_interface(const struct usb_device* usb_dev) {
+  struct usb_interface *intf;
+  struct usb_host_interface *interface;
+  int i;
+  if (!usb_dev)
+    return false;
+  if (!is_usb_device(&usb_dev->dev))
+    return false;
+  if (!usb_dev->actconfig)
+    return false;
+  for ( i = 0; i < usb_dev->actconfig->desc.bNumInterfaces; i++) {
+    intf = usb_dev->actconfig->interface[i];
+    if (!intf->cur_altsetting)
+      continue;
+    interface = intf->cur_altsetting;
+    if (interface->desc.bInterfaceSubClass == USB_INTERFACE_SUBCLASS_BOOT &&
+          interface->desc.bInterfaceProtocol== USB_INTERFACE_PROTOCOL_KEYBOARD)
+      return true;
+  }
+  return false;
+}
+
+static int check_usb_kbd(struct usb_device *usb_dev, void *data) {
+  if (contains_kbd_interface(usb_dev))
+    usb_kbd_add(usb_dev);
+  return 0;
+}
+
+static void detect_usb_kbd(struct vdtb_priv *priv) {
+  usb_for_each_dev(NULL, check_usb_kbd);
+  if (priv->input_dev)
+    set_tablet_mode(priv, !usb_keyboard_count());
+}
+
+static int usb_notifier_nb(struct notifier_block *nb,
+      unsigned long action, void *data) {
+  struct usb_device *usb_dev = data;
+  struct vdtb_priv *priv = container_of(nb, struct vdtb_priv, nb);
+  if (action > USB_DEVICE_REMOVE)
+    return NOTIFY_DONE;
+  if (action == USB_DEVICE_REMOVE) {
+    dev_info(priv->misc.this_device, "usb remove, current keyboards:%d\n", usb_keyboard_count());
+    usb_kbd_remove(usb_dev);
+    set_tablet_mode(priv, !usb_keyboard_count());
+  } else if (action == USB_DEVICE_ADD){
+    check_usb_kbd(usb_dev, NULL);
+    dev_info(priv->misc.this_device, "usb add, current keyboards:%d\n", usb_keyboard_count());
+    set_tablet_mode(priv, !usb_keyboard_count());
+  }
+  return NOTIFY_DONE;
+}
+
+static void remove_vdtb(void) {
+  struct vdtb_priv *priv = vdtb_priv_global;
+  if (!priv || !priv->misc.this_device)
+    return;
+  input_unregister_device(priv->input_dev);
+  usb_unregister_notify(&priv->nb);
+  usb_kdb_free_list();
+  misc_deregister(&priv->misc);
+  kfree(priv);
+  vdtb_priv_global = NULL;
+}
+
+static int __init init_vdtb_module(void) {
+  int err = 0;
+  struct input_dev *idev;
+  struct vdtb_priv *priv;
+
+  priv = kzalloc(sizeof(*priv), GFP_KERNEL);
+  if (!priv)
+    return -ENOMEM;
+
+  priv->misc.minor = VDTB_DEVICE_MINOR;
+  priv->misc.name = VDTB_DEVICE_ID;
+  priv->misc.fops = &vdtb_fops;
+
+  err = misc_register(&priv->misc);
+  if (err)
+    goto error_register;
+
+  vdtb_priv_global = priv;
+
+  idev = devm_input_allocate_device(priv->misc.this_device);
+  if (!idev)
+    goto error_alloc;
+  idev->name = VDTB_DEV_NAME;
+  idev->id.bustype = BUS_HOST;
+  input_set_capability(idev, EV_MSC, MSC_SCAN);
+  input_set_capability(idev, EV_SW, SW_TABLET_MODE);
+  err = input_register_device(idev);
+  if (err)
+    goto error_alloc;
+  priv->input_dev = idev;
+  detect_usb_kbd(priv);
+  priv->nb.notifier_call = usb_notifier_nb;
+  usb_register_notify(&priv->nb);
+  dev_info(priv->misc.this_device, "device is working.\n");
+  return 0;
+
+error_alloc:
+  remove_vdtb();
+  return err;
+error_register:
+  kfree(priv);
+  return err;
+}
+
+static void __exit cleanup_vdtb_module(void) {
+  remove_vdtb();
+}
+
+module_init(init_vdtb_module);
+module_exit(cleanup_vdtb_module);
+
+MODULE_AUTHOR("yang@fydeos.io");
+MODULE_DESCRIPTION("Detect tablet mode by usb keyboard");
+MODULE_LICENSE("GPL");

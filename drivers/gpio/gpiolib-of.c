@@ -493,6 +493,19 @@ static unsigned long of_convert_gpio_flags(enum of_gpio_flags flags)
 	return lflags;
 }
 
+int of_get_named_gpio_flags_legacy(const struct device_node *np,
+      const char *propname, int index, unsigned long *flags)
+{
+  struct gpio_desc *desc;
+  enum of_gpio_flags of_flags;
+  desc = of_get_named_gpiod_flags(np, propname, index, &of_flags);
+  if (IS_ERR(desc))
+    return PTR_ERR(desc);
+  *flags = of_convert_gpio_flags(of_flags);
+  return desc_to_gpio(desc);
+}
+EXPORT_SYMBOL_GPL(of_get_named_gpio_flags_legacy);
+
 static struct gpio_desc *of_find_gpio_rename(struct device_node *np,
 					     const char *con_id,
 					     unsigned int idx,

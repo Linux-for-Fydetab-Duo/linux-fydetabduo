@@ -85,6 +85,8 @@ static void report(const char *origin, const struct path *path, char *operation)
 	kfree(cmdline);
 	kfree(alloced);
 }
+#else
+static void report(const char *origin, const struct path *path, char *operation) { }
 #endif
 
 static int chromiumos_security_sb_mount(const char *dev_name,
