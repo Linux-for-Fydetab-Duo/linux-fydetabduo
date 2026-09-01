@@ -29,6 +29,10 @@
 #define SPDIF_CFGR_VDW_20	SPDIF_CFGR_VDW(0x1)
 #define SPDIF_CFGR_VDW_24	SPDIF_CFGR_VDW(0x2)
 
+#define SPDIF_CFGR_CSE_SHIFT	6
+#define SPDIF_CFGR_CSE_MASK	(1 << SPDIF_CFGR_CSE_SHIFT)
+#define SPDIF_CFGR_CSE_EN	(1 << SPDIF_CFGR_CSE_SHIFT)
+
 /*
  * DMACR
  * DMA control register
@@ -56,5 +60,6 @@
 #define SPDIF_INTSR	(0x0010)
 #define SPDIF_XFER	(0x0018)
 #define SPDIF_SMPDR	(0x0020)
+#define SPDIF_CHNSRn(x)	(0x00c0 + (x) * 4)
 
 #endif /* _ROCKCHIP_SPDIF_H */
