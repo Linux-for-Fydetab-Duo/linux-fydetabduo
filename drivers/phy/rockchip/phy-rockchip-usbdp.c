@@ -173,6 +173,8 @@ struct rk_udphy {
 	bool flip;
 	bool mode_change;
 	u8 mode;
+	/* modes rk_udphy_setup() last initialised the hardware with */
+	u8 setup_mode;
 	u8 status;
 
 	/* utilized for USB */
@@ -867,6 +869,8 @@ static int rk_udphy_setup(struct rk_udphy *udphy)
 		return ret;
 	}
 
+	udphy->setup_mode = udphy->mode;
+
 	return 0;
 }
 
@@ -1007,7 +1011,7 @@ static int rk_udphy_power_on(struct rk_udphy *udphy, u8 mode)
 
 		if (udphy->mode & UDPHY_MODE_USB)
 			rk_udphy_u3_port_disable(udphy, false);
-	} else if (udphy->mode_change) {
+	} else if (udphy->mode_change || (udphy->mode & ~udphy->setup_mode)) {
 		udphy->mode_change = false;
 		udphy->status = UDPHY_MODE_NONE;
 		if (udphy->mode == UDPHY_MODE_DP)
@@ -1381,15 +1385,19 @@ static int rk_udphy_typec_mux_set(struct typec_mux_dev *mux,
 
 		if (!data) {
 			rk_udphy_dp_hpd_event_trigger(udphy, false);
-		} else if (data->status & DP_STATUS_IRQ_HPD) {
-			rk_udphy_dp_hpd_event_trigger(udphy, false);
-			usleep_range(750, 800);
-			rk_udphy_dp_hpd_event_trigger(udphy, true);
 		} else if (data->status & DP_STATUS_HPD_STATE) {
 			if (udphy->mode != mode) {
 				udphy->mode = mode;
 				udphy->mode_change = true;
 			}
+			if (data->status & DP_STATUS_IRQ_HPD) {
+				rk_udphy_dp_hpd_event_trigger(udphy, false);
+				usleep_range(750, 800);
+			}
+			rk_udphy_dp_hpd_event_trigger(udphy, true);
+		} else if (data->status & DP_STATUS_IRQ_HPD) {
+			rk_udphy_dp_hpd_event_trigger(udphy, false);
+			usleep_range(750, 800);
 			rk_udphy_dp_hpd_event_trigger(udphy, true);
 		} else {
 			rk_udphy_dp_hpd_event_trigger(udphy, false);

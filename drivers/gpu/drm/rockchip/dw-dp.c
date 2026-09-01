@@ -5699,7 +5699,7 @@ static int dw_dp_typec_mux_set(struct typec_mux_dev *mux, struct typec_mux_state
 			dp->hotplug.long_hpd = true;
 			dp->hotplug.status = false;
 			schedule_work(&dp->hpd_work);
-		} else if (data->status & DP_STATUS_IRQ_HPD) {
+		} else if ((data->status & DP_STATUS_IRQ_HPD) && dp->hotplug.status) {
 			dev_info(dp->dev, "IRQ from the usbdp status=0x%x\n", data->status);
 			dp->hotplug.long_hpd = false;
 			dp->hotplug.status = true;
